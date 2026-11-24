@@ -1,0 +1,12 @@
+# nightwalk nightly timer: Mon-Sun 02:30 America/Chicago.
+# Generic 12-Factor unit: zero hardcoded usernames or absolute paths.
+[Unit]
+Description=Nightwalk — Nightly customer-zero dogfooding timer (02:30 America/Chicago)
+
+[Timer]
+OnCalendar=Mon..Sun 02:30:00 America/Chicago
+RandomizedDelaySec=60s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,59 @@
+{
+  "browser_url": "http://127.0.0.1:8490",
+  "browser_engine": "chromium",
+  "browser_headless": true,
+  "loopback_only": true,
+  "slow_endpoint_ms": 300,
+  "vlm_profile": "tactical",
+  "vlm_reasoning_effort": "medium",
+  "auto_file_tickets": true,
+  "ticket_priority": "P2",
+  "ticket_cooldown_hours": 72,
+  "max_tickets_per_run": 8,
+  "viewports": [
+    {
+      "name": "fold-folded",
+      "width": 374,
+      "height": 844,
+      "mobile": true,
+      "device_scale_factor": 2.0
+    },
+    {
+      "name": "fold-unfolded",
+      "width": 768,
+      "height": 720,
+      "mobile": true,
+      "device_scale_factor": 2.0
+    },
+    {
+      "name": "desktop",
+      "width": 1280,
+      "height": 800,
+      "mobile": false,
+      "device_scale_factor": 1.0
+    }
+  ],
+  "targets": [
+    {
+      "name": "example-app",
+      "base_url": "http://127.0.0.1:8080",
+      "target_repo": "example-app",
+      "description": "Example loopback web application",
+      "auth_cookie_name": "session_token",
+      "auth_token_file": "$XDG_CONFIG_HOME/example-app/token",
+      "flows": [
+        {
+          "name": "landing-and-nav",
+          "description": "Verify home load, same-origin links, layout invariants, and Vision QA",
+          "steps": [
+            { "action": "goto", "path": "/", "label": "Open landing page" },
+            { "action": "wait_for", "selector": "main", "label": "Wait for main content" },
+            { "action": "check_links", "max_links": 30, "label": "Probe same-origin links" },
+            { "action": "check_layout", "label": "Check overflow and emoji invariants" },
+            { "action": "screenshot", "tag": "home", "vision": true, "label": "Capture landing view" }
+          ]
+        }
+      ]
+    }
+  ]
+}
