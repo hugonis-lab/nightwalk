@@ -81,9 +81,9 @@ _LAYOUT_AUDIT_JS = """
   const bodyText = ((body && body.innerText) || '').trim();
   const textLen = bodyText.length;
 
-  // Detect clipped visible text nodes lacking ellipsis/scroll
+  // Detect clipped visible text nodes lacking ellipsis/scroll and genuine pictographic emojis
   const clipped = [];
-  const emojiRe = /[\\u{1F300}-\\u{1FAFF}\\u{2600}-\\u{27BF}]/u;
+  const emojiRe = /(?:\\u{1F3F4}[\\u{E0020}-\\u{E007E}]+\\u{E007F}|\\p{Regional_Indicator}{2}|[#*0-9]\\uFE0F?\\u20E3|(?:(?:\\p{Emoji_Presentation}|(?=\\p{Extended_Pictographic})[\\u{1F000}-\\u{1FFFF}]|\\p{Extended_Pictographic}\\uFE0F)(?:\\uFE0F|\\p{Emoji_Modifier})?(?:\\u200D(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})(?:\\uFE0F|\\p{Emoji_Modifier})?)*))/u;
   const emojis = [];
   const all = document.querySelectorAll('h1,h2,h3,h4,button,a,span,p,label,div,td,th');
   for (let i = 0; i < all.length && i < 1500; i++) {

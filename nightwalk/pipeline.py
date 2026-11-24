@@ -257,6 +257,12 @@ def run_dogfood(
                                 pass
                         flow_results.append(fr)
                         raw_defects.extend(fr.defects)
+                        if any("timed out" in (s.error or "").lower() for s in fr.steps):
+                            try:
+                                cdp.close()
+                                cdp.connect(timeout=10.0)
+                            except Exception:
+                                pass
             finally:
                 if cdp is not None:
                     cdp.close()
