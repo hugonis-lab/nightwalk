@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import signal
 import time
 import urllib.request
@@ -136,9 +137,9 @@ def run_dogfood(
 
     flow_results: list[FlowRunResult] = []
     raw_defects: list[Defect] = []
-
-    handle = None
-    cdp: CDPClient | None = None
+    active_browser_id: str | None = None
+    active_cdp: CDPClient | None = None
+    used_engine = cfg.browser_engine
 
     def _on_signal(signum: int, _frame: Any) -> None:
         raise KeyboardInterrupt(f"Interrupted by signal {signum}")
@@ -150,23 +151,8 @@ def run_dogfood(
         prev_sigterm = None
 
     try:
-        # Allocate one isolated browser instance per run via vega-browser pool
-        if selected_targets and selected_viewports:
-            handle = browser.spawn_instance(
-                browser_id=run_id,
-                label=f"Nightwalk {run_id}",
-                engine=cfg.browser_engine,
-                headless=cfg.browser_headless,
-                start_url="about:blank",
-            )
-            cdp = CDPClient(handle.cdp_url)
-            cdp.connect(timeout=12.0)
-
         for target in selected_targets:
             auth_token = load_target_auth_token(target)
-            if cdp is not None:
-                cdp.extra_secrets = (auth_token,) if auth_token else ()
-
             reachable, reach_detail = _probe_target_reachable(target, auth_token, timeout=5.0)
             if not reachable:
                 fp = compute_fingerprint(target.name, "service_down", target.base_url)
@@ -197,37 +183,97 @@ def run_dogfood(
                 )
                 continue
 
-            assert handle is not None and cdp is not None
-            for vp in selected_viewports:
-                for flow in target.flows:
-                    if flow_filter and flow.name not in flow_filter:
-                        continue
-                    if flow.viewports and vp.name not in flow.viewports:
-                        continue
-                    fr = run_flow(
-                        cfg=cfg,
-                        target=target,
-                        flow=flow,
-                        viewport=vp,
-                        cdp=cdp,
-                        browser=browser,
-                        browser_id=handle.browser_id,
-                        screenshots_dir=screenshots_dir,
-                        auth_token=auth_token,
-                        vision_enabled=vision_enabled,
-                    )
-                    flow_results.append(fr)
-                    raw_defects.extend(fr.defects)
+            if not selected_viewports:
+                continue
+
+            # Isolate one ephemeral browser instance + profile per target app to prevent
+            # cross-origin Service Worker, cookie, or SiteInstance renderer interference.
+            slug = re.sub(r"[^a-zA-Z0-9]+", "-", target.name).strip("-").lower()[:24] or "app"
+            bid = f"{run_id}-{slug}"[:60]
+            handle = None
+            cdp: CDPClient | None = None
+            try:
+                handle = browser.spawn_instance(
+                    browser_id=bid,
+                    label=f"Nightwalk {target.name}",
+                    engine=cfg.browser_engine,
+                    headless=cfg.browser_headless,
+                    start_url="about:blank",
+                )
+                active_browser_id = handle.browser_id
+                used_engine = handle.engine
+                cdp = CDPClient(handle.cdp_url, extra_secrets=(auth_token,) if auth_token else ())
+                cdp.connect(timeout=12.0)
+                active_cdp = cdp
+
+                for vp in selected_viewports:
+                    for flow in target.flows:
+                        if flow_filter and flow.name not in flow_filter:
+                            continue
+                        if flow.viewports and vp.name not in flow.viewports:
+                            continue
+                        try:
+                            fr = run_flow(
+                                cfg=cfg,
+                                target=target,
+                                flow=flow,
+                                viewport=vp,
+                                cdp=cdp,
+                                browser=browser,
+                                browser_id=handle.browser_id,
+                                screenshots_dir=screenshots_dir,
+                                auth_token=auth_token,
+                                vision_enabled=vision_enabled,
+                            )
+                        except Exception as exc:
+                            err_msg = redact_text(str(exc)[:260], (auth_token,) if auth_token else ())
+                            fp = compute_fingerprint(target.name, "flow_error", f"{flow.name}|{err_msg}")
+                            err_defect = Defect(
+                                fingerprint=fp,
+                                target=target.name,
+                                target_repo=target.target_repo,
+                                flow=flow.name,
+                                viewport=f"{vp.name} ({vp.label})",
+                                category="flow_error",
+                                severity="major",
+                                title=f"[{target.name}] Flow '{flow.name}' crashed: {err_msg[:80]}",
+                                summary=err_msg,
+                                evidence={"exception": err_msg},
+                            )
+                            fr = FlowRunResult(
+                                target=target.name,
+                                flow=flow.name,
+                                viewport=vp.name,
+                                viewport_px=vp.label,
+                                ok=False,
+                                elapsed_ms=0.0,
+                                defects=[err_defect],
+                            )
+                            # Reconnect CDP cleanly so subsequent flows continue unaffected
+                            try:
+                                cdp.close()
+                                cdp.connect(timeout=10.0)
+                            except Exception:
+                                pass
+                        flow_results.append(fr)
+                        raw_defects.extend(fr.defects)
+            finally:
+                if cdp is not None:
+                    cdp.close()
+                active_cdp = None
+                if handle is not None:
+                    browser.delete_instance(handle.browser_id, purge_profile=True)
+                active_browser_id = None
     finally:
         if prev_sigterm is not None:
             try:
                 signal.signal(signal.SIGTERM, prev_sigterm)
             except Exception:
                 pass
-        if cdp is not None:
-            cdp.close()
-        if handle is not None:
-            browser.delete_instance(handle.browser_id, purge_profile=True)
+        if active_cdp is not None:
+            active_cdp.close()
+        if active_browser_id is not None:
+            browser.delete_instance(active_browser_id, purge_profile=True)
 
     unique_defects = deduplicate_defects_in_run(raw_defects)
     finished_at = _utc_now()
@@ -256,7 +302,7 @@ def run_dogfood(
         finished_at=finished_at,
         elapsed_ms=elapsed_ms,
         dry_run=dry_run,
-        engine=handle.engine if handle is not None else cfg.browser_engine,
+        engine=used_engine,
         vision_enabled=vision_enabled and bool(cfg.vlm_url and cfg.vlm_model),
         vision_model=cfg.vlm_model if vision_enabled else "",
         targets_run=len(selected_targets),
