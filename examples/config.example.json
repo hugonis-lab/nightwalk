@@ -16,14 +16,14 @@
       "width": 374,
       "height": 844,
       "mobile": true,
-      "device_scale_factor": 2.0
+      "device_scale_factor": 1.0
     },
     {
       "name": "fold-unfolded",
       "width": 768,
       "height": 720,
       "mobile": true,
-      "device_scale_factor": 2.0
+      "device_scale_factor": 1.0
     },
     {
       "name": "desktop",

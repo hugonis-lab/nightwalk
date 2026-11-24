@@ -40,7 +40,7 @@ class ViewportSpec:
             width=width,
             height=height,
             mobile=bool(data.get("mobile", width < 900)),
-            device_scale_factor=float(data.get("device_scale_factor", 2.0 if width < 900 else 1.0)),
+            device_scale_factor=float(data.get("device_scale_factor", 1.0)),
         )
 
 

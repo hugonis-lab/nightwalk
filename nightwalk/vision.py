@@ -33,19 +33,22 @@ def _strip_json_fences(raw: str) -> str:
     return s.strip()
 
 
-def _encode_image_for_vlm(path: Path, max_dim: int = 1280) -> tuple[str, str]:
-    """Return (mime_type, base64_data); downscale oversized frames in-memory when Pillow is present."""
+def _encode_image_for_vlm(path: Path, max_dim: int = 1024) -> tuple[str, str]:
+    """Return (mime_type, base64_data); downscale high-res frames in-memory by pixel dimension."""
     raw = path.read_bytes()
     ext = path.suffix.lower()
     mime = "image/jpeg" if ext in (".jpg", ".jpeg") else "image/png"
-    if len(raw) <= 450_000 or Image is None:
+    if Image is None:
         return (mime, base64.b64encode(raw).decode("ascii"))
     try:
         with Image.open(io.BytesIO(raw)) as img:
             w, h = img.size
-            if max(w, h) > max_dim:
+            needs_resize = max(w, h) > max_dim
+            if not needs_resize and len(raw) <= 220_000:
+                return (mime, base64.b64encode(raw).decode("ascii"))
+            if needs_resize:
                 scale = max_dim / float(max(w, h))
-                img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+                img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
             buf = io.BytesIO()
             img.convert("RGB").save(buf, format="JPEG", quality=84, optimize=True)
             return ("image/jpeg", base64.b64encode(buf.getvalue()).decode("ascii"))

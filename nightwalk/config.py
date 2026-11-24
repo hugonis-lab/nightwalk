@@ -24,9 +24,9 @@ DEFAULT_BROWSER_ENGINE = "chromium"
 DEFAULT_SLOW_ENDPOINT_MS = 300.0
 DEFAULT_VLM_PROFILE = "tactical"
 DEFAULT_VLM_REASONING_EFFORT = "low"
-DEFAULT_VLM_TIMEOUT_SEC = 120.0
-DEFAULT_VLM_MAX_TOKENS = 2048
-DEFAULT_VLM_CONCURRENCY = 3
+DEFAULT_VLM_TIMEOUT_SEC = 45.0
+DEFAULT_VLM_MAX_TOKENS = 1024
+DEFAULT_VLM_CONCURRENCY = 2
 DEFAULT_TICKET_PRIORITY = "P2"
 DEFAULT_TICKET_COOLDOWN_HOURS = 72.0
 DEFAULT_MAX_TICKETS_PER_RUN = 8
@@ -63,8 +63,8 @@ def default_config_path(env: dict[str, str] | None = None) -> Path:
 def default_viewports() -> list[ViewportSpec]:
     """Portable mobile-folded, foldable-unfolded, and desktop viewport suite."""
     return [
-        ViewportSpec(name="fold-folded", width=374, height=844, mobile=True, device_scale_factor=2.0),
-        ViewportSpec(name="fold-unfolded", width=768, height=720, mobile=True, device_scale_factor=2.0),
+        ViewportSpec(name="fold-folded", width=374, height=844, mobile=True, device_scale_factor=1.0),
+        ViewportSpec(name="fold-unfolded", width=768, height=720, mobile=True, device_scale_factor=1.0),
         ViewportSpec(name="desktop", width=1280, height=800, mobile=False, device_scale_factor=1.0),
     ]
 
