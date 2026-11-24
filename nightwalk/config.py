@@ -23,9 +23,10 @@ DEFAULT_BROWSER_URL = "http://127.0.0.1:8490"
 DEFAULT_BROWSER_ENGINE = "chromium"
 DEFAULT_SLOW_ENDPOINT_MS = 300.0
 DEFAULT_VLM_PROFILE = "tactical"
-DEFAULT_VLM_REASONING_EFFORT = "medium"
+DEFAULT_VLM_REASONING_EFFORT = "low"
 DEFAULT_VLM_TIMEOUT_SEC = 120.0
 DEFAULT_VLM_MAX_TOKENS = 2048
+DEFAULT_VLM_CONCURRENCY = 3
 DEFAULT_TICKET_PRIORITY = "P2"
 DEFAULT_TICKET_COOLDOWN_HOURS = 72.0
 DEFAULT_MAX_TICKETS_PER_RUN = 8
@@ -189,6 +190,7 @@ class NightwalkConfig:
     vlm_reasoning_effort: str = DEFAULT_VLM_REASONING_EFFORT
     vlm_timeout_sec: float = DEFAULT_VLM_TIMEOUT_SEC
     vlm_max_tokens: int = DEFAULT_VLM_MAX_TOKENS
+    vlm_concurrency: int = DEFAULT_VLM_CONCURRENCY
     state_dir: Path = field(default_factory=lambda: xdg_state_home() / "nightwalk")
     report_dir: Path = field(default_factory=lambda: Path.home() / "Documents" / "reports" / "dogfood")
     panel_path: Path | None = None
@@ -282,6 +284,16 @@ def load_config(
         (e.get("NIGHTWALK_VLM_MAX_TOKENS") or "").strip()
         or raw.get("vlm_max_tokens", DEFAULT_VLM_MAX_TOKENS)
     )
+    vlm_concurrency = max(
+        1,
+        min(
+            4,
+            int(
+                (e.get("NIGHTWALK_VLM_CONCURRENCY") or "").strip()
+                or raw.get("vlm_concurrency", DEFAULT_VLM_CONCURRENCY)
+            ),
+        ),
+    )
 
     state_raw = (e.get("NIGHTWALK_STATE_DIR") or "").strip() or str(raw.get("state_dir") or "").strip()
     state_dir = Path(os.path.expandvars(state_raw)).expanduser() if state_raw else (xdg_state_home(e) / "nightwalk")
@@ -369,6 +381,7 @@ def load_config(
         vlm_reasoning_effort=vlm_reasoning_effort,
         vlm_timeout_sec=vlm_timeout_sec,
         vlm_max_tokens=vlm_max_tokens,
+        vlm_concurrency=vlm_concurrency,
         state_dir=state_dir,
         report_dir=report_dir,
         panel_path=panel_path,

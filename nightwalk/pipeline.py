@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import time
 import urllib.request
 from datetime import datetime, timezone
@@ -139,6 +140,15 @@ def run_dogfood(
     handle = None
     cdp: CDPClient | None = None
 
+    def _on_signal(signum: int, _frame: Any) -> None:
+        raise KeyboardInterrupt(f"Interrupted by signal {signum}")
+
+    prev_sigterm = signal.getsignal(signal.SIGTERM)
+    try:
+        signal.signal(signal.SIGTERM, _on_signal)
+    except Exception:
+        prev_sigterm = None
+
     try:
         # Allocate one isolated browser instance per run via vega-browser pool
         if selected_targets and selected_viewports:
@@ -209,6 +219,11 @@ def run_dogfood(
                     flow_results.append(fr)
                     raw_defects.extend(fr.defects)
     finally:
+        if prev_sigterm is not None:
+            try:
+                signal.signal(signal.SIGTERM, prev_sigterm)
+            except Exception:
+                pass
         if cdp is not None:
             cdp.close()
         if handle is not None:

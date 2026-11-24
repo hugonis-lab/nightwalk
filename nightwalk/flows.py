@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import re
 import time
@@ -561,7 +562,7 @@ def run_flow(
         ignore_network_patterns=target.ignore_network_patterns,
     )
 
-    # Multimodal Vision QA on marked screenshots
+    # Multimodal Vision QA on marked screenshots (bounded concurrency across VLM slots)
     vision_results: list[VisionAssessment] = []
     if vision_enabled and flow.vision_qa and ctx.vision_targets:
         telemetry_ctx = {
@@ -571,16 +572,34 @@ def run_flow(
             "broken_links": len(ctx.broken_links),
             "horizontal_overflow_px": ctx.layout_metrics.get("horizontalOverflowPx", 0),
         }
-        for shot_path, tag in ctx.vision_targets:
-            va = inspect_screenshot(
-                cfg,
-                shot_path,
-                target_name=target.name,
-                flow_name=f"{flow.name}:{tag}",
-                viewport=viewport,
-                telemetry_context=telemetry_ctx,
-            )
-            vision_results.append(va)
+        workers = min(max(1, cfg.vlm_concurrency), len(ctx.vision_targets))
+        if workers == 1:
+            for shot_path, tag in ctx.vision_targets:
+                vision_results.append(
+                    inspect_screenshot(
+                        cfg,
+                        shot_path,
+                        target_name=target.name,
+                        flow_name=f"{flow.name}:{tag}",
+                        viewport=viewport,
+                        telemetry_context=telemetry_ctx,
+                    )
+                )
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                futs = [
+                    pool.submit(
+                        inspect_screenshot,
+                        cfg,
+                        shot_path,
+                        target_name=target.name,
+                        flow_name=f"{flow.name}:{tag}",
+                        viewport=viewport,
+                        telemetry_context=telemetry_ctx,
+                    )
+                    for shot_path, tag in ctx.vision_targets
+                ]
+                vision_results = [f.result() for f in futs]
 
     defects = build_defects_from_flow(
         target=target,
