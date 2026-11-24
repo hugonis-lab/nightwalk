@@ -378,9 +378,9 @@ def build_defects_from_flow(
     defects: list[Defect] = []
     vp_label = f"{viewport.name} ({viewport.label})"
 
-    # 1. Interactive flow step failures
+    # 1. Interactive flow step failures (grouped across viewports by target+flow+error)
     for err in step_errors:
-        fp = compute_fingerprint(target.name, "flow_error", f"{flow_name}|{viewport.name}|{err}")
+        fp = compute_fingerprint(target.name, "flow_error", f"{flow_name}|{err}")
         defects.append(
             Defect(
                 fingerprint=fp,
@@ -390,7 +390,7 @@ def build_defects_from_flow(
                 viewport=vp_label,
                 category="flow_error",
                 severity="major",
-                title=f"[{target.name}] Flow '{flow_name}' failed on {viewport.name}",
+                title=f"[{target.name}] Flow '{flow_name}' failed: {err[:90]}",
                 summary=err,
                 evidence={"step_error": err},
                 screenshots=list(screenshots),
@@ -532,11 +532,13 @@ def build_defects_from_flow(
             )
         )
 
-    # 7. Multimodal Vision QA critical/major issues
+    # 7. Multimodal Vision QA high-confidence visual regressions (FAIL verdict or critical severity)
     for va in vision_assessments:
         if va.verdict not in ("FAIL", "WARN"):
             continue
         for issue in va.issues:
+            if va.verdict == "WARN" and issue.severity != "critical":
+                continue
             if issue.severity not in ("critical", "major"):
                 continue
             if not issue.element or not issue.description:

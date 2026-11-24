@@ -479,9 +479,8 @@ def run_flow(
                         screenshot_path=shot_path,
                     )
                 )
-                # Abort remaining dependent steps on hard navigation/wait failure
-                if step.action == "goto":
-                    break
+                # Abort remaining dependent sequential steps after a hard step failure
+                break
         except Exception as exc:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             err_msg = redact_text(f"{label}: {exc}")

@@ -85,15 +85,19 @@ def inspect_screenshot(
         f"Viewport: {viewport.name} ({viewport.width}x{viewport.height}, mobile={viewport.mobile})\n"
         f"Grounded DOM/network telemetry: {ctx_json}\n\n"
         "Inspect ONLY what is actually visible in the screenshot. Do NOT invent invisible defects.\n"
-        "Flag genuine customer-facing visual regressions:\n"
-        "- overlapping text or controls, clipped labels, horizontal overflow cutoffs\n"
-        "- blank/stuck loading canvas or broken/unrendered SVG charts\n"
-        "- severely unreadable contrast or broken alignment on mobile/foldable viewports\n"
-        "- decorative emoji glyphs in user-facing UI chrome\n\n"
+        "Do NOT flag normal responsive design choices as defects:\n"
+        "- Intentional CSS text-overflow ellipsis ('...' or '…') on narrow mobile viewports is EXPECTED, not clipping.\n"
+        "- Monochrome geometric or typographic UI glyphs (dots, arrows, chevrons, diamonds, four-point stars) are NOT emojis.\n"
+        "- Only flag genuine colorful pictographic emojis (faces, hands, rockets, fire, checkmarks) as emoji defects.\n\n"
+        "Flag ONLY genuine customer-facing visual regressions:\n"
+        "- overlapping or colliding text/controls that block reading or tapping\n"
+        "- un-ellipsized hard clipping where glyphs are sliced mid-character or controls run off-screen\n"
+        "- blank/stuck loading canvas, error stack trace, or broken/missing SVG chart or broken image\n"
+        "- severely unreadable text contrast or broken layout collapse\n\n"
         "Use severity strictly:\n"
         "- critical: broken/blank screen, unusable overlapping controls, unreadable core UI\n"
-        "- major: obvious clipping, misaligned layout, broken chart/widget, decorative emoji in chrome\n"
-        "- minor: small spacing or stylistic polish nit (do not fail verdict for minor nits alone)\n\n"
+        "- major: obvious un-ellipsized clipping, broken chart/widget, misaligned layout breaking usability, pictographic emoji in chrome\n"
+        "- minor: small spacing or stylistic polish nit (use verdict='PASS' when only minor nits exist)\n\n"
         "Return ONLY valid raw JSON (no markdown fences) matching this exact schema:\n"
         '{\n'
         '  "verdict": "PASS" | "WARN" | "FAIL",\n'
@@ -107,7 +111,8 @@ def inspect_screenshot(
 
     payload: dict[str, Any] = {
         "model": cfg.vlm_model,
-        "temperature": 0.2,
+        "temperature": 1.0,
+        "top_p": 0.95,
         "max_tokens": cfg.vlm_max_tokens,
         "messages": [
             {
