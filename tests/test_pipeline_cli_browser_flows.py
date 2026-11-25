@@ -682,6 +682,13 @@ class TestBuiltinSteps(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("did not update readout", err)
 
+            cdp_miss = Mock()
+            cdp_miss.evaluate.return_value = None
+            ctx_miss = self._ctx(root, cdp_miss)
+            ok_miss, _, err_miss = _step_scrub(ctx_miss, FlowStep(action="scrub", selector=".missing", timeout_ms=200))
+            self.assertFalse(ok_miss)
+            self.assertIn("Scrub target not visible", err_miss)
+
     def test_type_found_and_missing(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -869,19 +876,19 @@ class TestRunFlow(unittest.TestCase):
         self.assertTrue(result.steps[1].ok)
 
     def test_optional_failing_step_continues_flow(self) -> None:
-        steps_registry = {}
         self.addCleanup(self._restore_registry, dict(STEP_REGISTRY))
 
         @register_step("soft-fail")
         def _soft_fail(ctx, step):
             return (False, "", "soft boom")
 
+        @register_step("soft-raise")
+        def _soft_raise(ctx, step):
+            raise RuntimeError("soft exception")
+
         @register_step("mark-after")
         def _mark_after(ctx, step):
             return (True, "after done", "")
-
-        steps_registry["soft-fail"] = _soft_fail
-        steps_registry["mark-after"] = _mark_after
 
         inputs = self._make_inputs()
         inputs["flow"] = FlowSpec(
@@ -889,16 +896,74 @@ class TestRunFlow(unittest.TestCase):
             steps=[
                 FlowStep(action="goto", path="/"),
                 FlowStep(action="soft-fail", optional=True, label="optional step"),
+                FlowStep(action="soft-raise", optional=True, label="optional raise"),
                 FlowStep(action="mark-after", label="after step"),
             ],
             vision_qa=False,
         )
         result = self._run(inputs)
-        self.assertEqual(len(result.steps), 3)
+        self.assertEqual(len(result.steps), 4)
         self.assertTrue(result.steps[1].ok)
         self.assertTrue(result.steps[1].skipped)
         self.assertIn("Optional step skipped", result.steps[1].detail)
         self.assertTrue(result.steps[2].ok)
+        self.assertTrue(result.steps[2].skipped)
+        self.assertIn("Optional step error ignored", result.steps[2].detail)
+        self.assertTrue(result.steps[3].ok)
+
+    def test_non_goto_step_exception_records_error_and_continues(self) -> None:
+        self.addCleanup(self._restore_registry, dict(STEP_REGISTRY))
+
+        @register_step("hard-raise")
+        def _hard_raise(ctx, step):
+            raise RuntimeError("hard crash")
+
+        @register_step("after-crash")
+        def _after_crash(ctx, step):
+            return (True, "continued", "")
+
+        inputs = self._make_inputs()
+        inputs["flow"] = FlowSpec(
+            name="home",
+            steps=[
+                FlowStep(action="goto", path="/"),
+                FlowStep(action="hard-raise", label="crasher"),
+                FlowStep(action="after-crash", label="survivor"),
+            ],
+            vision_qa=False,
+        )
+        inputs["cdp"].capture_screenshot.return_value = b"png"
+        result = self._run(inputs)
+        self.assertEqual(len(result.steps), 3)
+        self.assertFalse(result.steps[1].ok)
+        self.assertIn("hard crash", result.steps[1].error)
+        self.assertTrue(result.steps[1].screenshot_path)
+        self.assertTrue(result.steps[2].ok)
+        self.assertFalse(result.ok)
+
+    def test_explicit_checks_skip_auto_checks_and_fallback_vision_target(self) -> None:
+        inputs = self._make_inputs(vision_enabled=True)
+        inputs["flow"] = FlowSpec(
+            name="home",
+            steps=[
+                FlowStep(action="goto", path="/"),
+                FlowStep(action="check_layout"),
+                FlowStep(action="check_links"),
+                FlowStep(action="screenshot", tag="snap", vision=False),
+            ],
+            check_layout=True,
+            check_links=True,
+            vision_qa=True,
+        )
+        inputs["cdp"].capture_screenshot.return_value = b"png"
+        with patch("nightwalk.flows.audit_dom_layout", return_value={"horizontalOverflowPx": 0, "emojiNodes": []}) as layout_mock, \
+             patch("nightwalk.flows.check_same_origin_links", return_value=(1, [])) as links_mock, \
+             patch("nightwalk.flows.inspect_screenshot", return_value=VisionAssessment(screenshot_path="", verdict="PASS")) as vlm_mock:
+            result = run_flow(**inputs)
+        self.assertEqual(layout_mock.call_count, 1)
+        self.assertEqual(links_mock.call_count, 1)
+        self.assertEqual(vlm_mock.call_count, 1)
+        self.assertEqual(len(result.vision), 1)
 
     def test_required_failing_step_breaks_remaining_steps(self) -> None:
         inputs = self._make_inputs()
@@ -1105,13 +1170,14 @@ class TestCheckEnvironment(unittest.TestCase):
     def test_browser_failure_and_down_target_flip_ok_false(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            self.server.state["health_json"] = None
             self.server.state["health_status"] = 500
-            cfg = self._cfg(root)
+            cfg = self._cfg(root, vlm_url=f"http://127.0.0.1:{_free_port()}/v1")
             cfg.targets = [TargetSpec(name="down", base_url=f"http://127.0.0.1:{_free_port()}")]
             result = check_environment(cfg)
         self.assertFalse(result["ok"])
         self.assertFalse(result["browser_ok"])
+        self.assertFalse(result["vlm_ok"])
+        self.assertTrue(result["vlm_detail"])
         self.assertFalse(result["targets"][0]["reachable"])
 
     def test_unconfigured_vlm_reports_not_configured(self) -> None:
@@ -1206,7 +1272,6 @@ class TestRunDogfood(unittest.TestCase):
     def test_full_orchestration_filters_isolated_instances_and_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            vp = ViewportSpec(name="mobile", width=374, height=844, mobile=True)
             cfg = self._cfg(root)
             cfg.targets = [
                 TargetSpec(
@@ -1373,9 +1438,10 @@ class TestRunDogfood(unittest.TestCase):
                  patch("nightwalk.pipeline.CDPClient", return_value=cdp_instance), \
                  patch("nightwalk.pipeline.run_flow", side_effect=_result):
                 summary = run_dogfood(cfg, dry_run=True)
-            # 2 viewports x 1 flow, each with a timed-out step
+            # 2 viewports x 1 flow, each with a timed-out step: 1 initial connect + 2 reconnects, 2 timeout closes + 1 finally close
             self.assertEqual(summary.flows_run, 2)
-            self.assertGreaterEqual(cdp_instance.close.call_count, 2)
+            self.assertEqual(cdp_instance.connect.call_count, 3)
+            self.assertEqual(cdp_instance.close.call_count, 3)
 
     def test_in_run_dedup_ticket_files_once_and_persists_run(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -1604,10 +1670,11 @@ class TestParse(unittest.TestCase):
 
     def test_engine_choices_enforced_and_subcommand_required(self) -> None:
         p = _build_parser()
-        with self.assertRaises(SystemExit):
-            p.parse_args(["run", "--engine", "bogus"])
-        with self.assertRaises(SystemExit):
-            p.parse_args([])
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                p.parse_args(["run", "--engine", "bogus"])
+            with self.assertRaises(SystemExit):
+                p.parse_args([])
 
 
 class TestMain(unittest.TestCase):
@@ -1637,7 +1704,15 @@ class TestMain(unittest.TestCase):
             "vlm_model": "mock-vlm",
             "vlm_ok": True,
             "vlm_detail": "HTTP 200 (mock-vlm)",
-            "targets": [],
+            "targets": [
+                {
+                    "name": "app",
+                    "base_url": "http://127.0.0.1:8080",
+                    "reachable": True,
+                    "detail": "HTTP 200",
+                    "flows": 1,
+                }
+            ],
         }
         unhealthy = {**healthy, "ok": False, "browser_ok": False, "browser_detail": "boom"}
         with patch("nightwalk.cli.check_environment", return_value=healthy):
@@ -1645,6 +1720,7 @@ class TestMain(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("Config:", out)
             self.assertIn("Browser:", out)
+            self.assertIn("- app: http://127.0.0.1:8080 [OK]", out)
         with patch("nightwalk.cli.check_environment", return_value=healthy):
             code, out = _run_cli(["--config", str(cfg_path), "check", "--json"])
             self.assertEqual(code, 0)
