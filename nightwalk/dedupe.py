@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
 import sqlite3
 import time
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -33,8 +35,17 @@ class StateStore:
         con.execute("PRAGMA foreign_keys=ON")
         return con
 
+    @contextlib.contextmanager
+    def _session(self) -> Iterator[sqlite3.Connection]:
+        con = self._connect()
+        try:
+            with con:
+                yield con
+        finally:
+            con.close()
+
     def _init_schema(self) -> None:
-        with self._connect() as con:
+        with self._session() as con:
             con.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS runs (
@@ -80,7 +91,7 @@ class StateStore:
             os.chmod(self.db_path, 0o600)
 
     def get_defect(self, fingerprint: str) -> dict[str, Any] | None:
-        with self._connect() as con:
+        with self._session() as con:
             row = con.execute("SELECT * FROM defects WHERE fingerprint = ?", (fingerprint,)).fetchone()
             return dict(row) if row is not None else None
 
@@ -88,7 +99,7 @@ class StateStore:
         now_iso = _iso_now()
         now_epoch = time.time()
         shots_json = json.dumps(defect.screenshots[:6])
-        with self._connect() as con:
+        with self._session() as con:
             existing = con.execute(
                 "SELECT * FROM defects WHERE fingerprint = ?",
                 (defect.fingerprint,),
@@ -141,7 +152,7 @@ class StateStore:
     def mark_defect_filed(self, fingerprint: str, task_id: int | None) -> None:
         now_iso = _iso_now()
         now_epoch = time.time()
-        with self._connect() as con:
+        with self._session() as con:
             con.execute(
                 """
                 UPDATE defects
@@ -161,7 +172,7 @@ class StateStore:
         return (False, row.get("pulse_task_id"))
 
     def record_run(self, summary: RunSummary) -> None:
-        with self._connect() as con:
+        with self._session() as con:
             con.execute(
                 """
                 INSERT OR REPLACE INTO runs (
@@ -193,7 +204,7 @@ class StateStore:
             )
 
     def list_runs(self, limit: int = 10) -> list[dict[str, Any]]:
-        with self._connect() as con:
+        with self._session() as con:
             rows = con.execute(
                 "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?",
                 (max(1, int(limit)),),
@@ -201,7 +212,7 @@ class StateStore:
             return [dict(r) for r in rows]
 
     def list_defects(self, limit: int = 30) -> list[dict[str, Any]]:
-        with self._connect() as con:
+        with self._session() as con:
             rows = con.execute(
                 "SELECT * FROM defects ORDER BY last_seen_epoch DESC LIMIT ?",
                 (max(1, int(limit)),),
